@@ -844,3 +844,33 @@ def test_get_compression_cache_returns_same_instance_under_contention() -> None:
     first = results[0]
     for c in results[1:]:
         assert c is first, "Concurrent _get_compression_cache returned different instances"
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        [{"type": "text", "text": "first"}, {"type": "text", "text": "second"}],
+        [
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA=="}},
+            {"type": "text", "text": "second"},
+        ],
+        [],
+        ["not a block"],
+        [{"type": "text"}],
+        [{"type": "text", "text": 42}],
+    ],
+)
+def test_shared_swap_and_cache_preserve_unsupported_openai_blocks(content):
+    from copy import deepcopy
+
+    from headroom.cache.compression_cache import _swap_tool_result_content
+
+    message = {"role": "tool", "content": content}
+    original = deepcopy(message)
+    assert _swap_tool_result_content(message, "short") == original
+    cache = CompressionCache()
+    cache.store_compressed(cache.content_hash("first\nsecond"), "short", tokens_saved=10)
+    before = cache.get_stats().copy()
+    assert cache.apply_cached([message]) == [original]
+    assert cache.get_stats() == before
+    assert message == original
