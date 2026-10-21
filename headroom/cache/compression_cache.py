@@ -81,7 +81,13 @@ def _swap_tool_result_content(msg: dict, new_content: str) -> dict:
     new_msg = copy.deepcopy(msg)
     # OpenAI format
     if new_msg.get("role") == "tool":
-        new_msg["content"] = new_content
+        content = new_msg.get("content")
+        if isinstance(content, list):
+            # apply_cached only rewrites an unambiguous single text block.
+            # Keep its shape and metadata, including gateway cache breakpoints.
+            content[0]["text"] = new_content
+        else:
+            new_msg["content"] = new_content
         return new_msg
     # Anthropic format
     content = new_msg.get("content")
@@ -341,6 +347,18 @@ class CompressionCache:
         with self._lock:
             result: list[dict] = []
             for msg in messages:
+                if msg.get("role") == "tool" and isinstance(msg.get("content"), list):
+                    blocks = msg["content"]
+                    # A cached joined string cannot be mapped back to multiple
+                    # blocks without losing boundaries, metadata or media.
+                    if not (
+                        len(blocks) == 1
+                        and isinstance(blocks[0], dict)
+                        and blocks[0].get("type") == "text"
+                        and isinstance(blocks[0].get("text"), str)
+                    ):
+                        result.append(msg)
+                        continue
                 if _is_tool_result_message(msg):
                     content = _extract_tool_result_content(msg)
                     if content is not None:

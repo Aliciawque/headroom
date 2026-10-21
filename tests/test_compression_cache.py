@@ -401,6 +401,53 @@ class TestCompressionCacheFrozenCount:
 
 
 class TestCompressionCacheApplyAndUpdate:
+    @pytest.mark.parametrize(
+        "metadata",
+        [{}, {"cache_control": {"type": "ephemeral", "ttl": "1h"}}, {"custom": {"nested": [1, 2]}}],
+    )
+    def test_openai_cached_text_block_preserves_shape_and_metadata(self, metadata: dict) -> None:
+        import copy
+
+        cache = CompressionCache()
+        original = "synthetic records " * 50
+        older = {"role": "tool", "tool_call_id": "old", "content": original}
+        cache.update_from_result([older], [{**older, "content": "short output"}])
+        message = {
+            "role": "tool",
+            "tool_call_id": "new",
+            "content": [{"type": "text", "text": original, **metadata}],
+        }
+        snapshot = copy.deepcopy(message)
+
+        result = cache.apply_cached([message])[0]
+
+        assert result == {**message, "content": [{**message["content"][0], "text": "short output"}]}
+        assert message == snapshot
+        assert result is not message
+        assert result["content"][0] is not message["content"][0]
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            {"type": "text", "text": "second", "cache_control": {"type": "ephemeral"}},
+            {"type": "image_url", "image_url": {"url": "https://example.com/synthetic.png"}},
+            {"type": "unknown", "value": "keep me"},
+        ],
+    )
+    def test_openai_cached_multiblock_content_is_not_collapsed(self, extra: dict) -> None:
+        import copy
+
+        cache = CompressionCache()
+        blocks = [{"type": "text", "text": "first"}, extra]
+        text = "first\nsecond" if extra["type"] == "text" else "first"
+        cache.store_compressed(cache.content_hash(text), "short", tokens_saved=1)
+        message = {"role": "tool", "tool_call_id": "new", "content": blocks}
+        snapshot = copy.deepcopy(message)
+
+        assert cache.apply_cached([message]) == [snapshot]
+        assert message == snapshot
+        assert cache.get_stats()["hits"] == 0
+
     def test_apply_cached_swaps_tool_results(self, cache: CompressionCache) -> None:
         original_content = "big tool output"
         h = CompressionCache.content_hash(original_content)
