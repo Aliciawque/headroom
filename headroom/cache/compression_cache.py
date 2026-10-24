@@ -325,8 +325,9 @@ class CompressionCache:
 
         A message is stable if it is a plain user/assistant/system message,
         an assistant message with tool_use blocks, or a tool_result whose
-        content hash is already in the cache. The first unstable tool_result
-        (cache miss) stops the count.
+        content hash is already in the cache and whose shape can be replayed.
+        The first unstable tool_result (cache miss or unsupported shape) stops
+        the count. A joined text hash alone does not prove shape-safe replay.
 
         The trailing message is *always* excluded from the frozen prefix
         (cap of ``len(messages) - 1``). The trailing message represents
@@ -344,6 +345,10 @@ class CompressionCache:
             count = 0
             for msg in messages:
                 if _is_tool_result_message(msg):
+                    # A joined-text cache/stable hash cannot prove replay for
+                    # shapes that apply_cached deliberately leaves untouched.
+                    if not _can_swap_tool_result_content(msg):
+                        break
                     content = _extract_tool_result_content(msg)
                     if content is not None:
                         h = self.content_hash(content)
